@@ -48,8 +48,9 @@ def initialize_sql(settings):
     """Called by the app on startup to setup bindings to the DB"""
     engine = engine_from_config(settings, 'sqlalchemy.')
 
-    DBSession.configure(bind=engine)
-    Base.metadata.bind = engine
+    if not DBSession.registry.has():
+        DBSession.configure(bind=engine)
+        Base.metadata.bind = engine
 
     import bookie.models.fulltext as ft
     ft.set_index(settings.get('fulltext.engine'),
@@ -127,10 +128,10 @@ class TagMgr(object):
         Currently it only supports space delimited
 
         """
-        if not tag_str or tag_str == '':
+        if not tag_str or tag_str == u'':
             return {}
 
-        tag_list = set([tag.lower().strip() for tag in tag_str.split(" ")])
+        tag_list = set([tag.lower().strip() for tag in tag_str.split(u" ")])
         tag_objects = {}
 
         for tag in TagMgr.find(tags=tag_list):
@@ -239,7 +240,7 @@ class TagMgr(object):
             recent = BmarkMgr.get_recent_bmark(username=username)
 
             if recent:
-                tag_suggest.extend(recent.tag_str.split(" "))
+                tag_suggest.extend(recent.tag_str.split(u" "))
 
         tag_list = list(set(tag_suggest))
         return tag_list
@@ -332,12 +333,13 @@ class Hashed(Base):
     def __init__(self, url):
         """We'll auto hash the id for them and set this up"""
         cleaned_url = str(unidecode(url))
-        self.hash_id = generate_hash(cleaned_url)
+        self.hash_id = unicode(generate_hash(cleaned_url))
         self.url = url
 
 
 class BmarkMgr(object):
     """Class to handle non-instance Bmark functions"""
+
     @staticmethod
     def get_by_url(url, username=None):
         """Get a bmark from the system via the url"""
@@ -420,8 +422,10 @@ class BmarkMgr(object):
                     from_obj=[
                         bmarks_tags.join(
                             'tags',
-                            and_(Tag.name.in_(tags),
-                            bmarks_tags.c.tag_id == Tag.tid)
+                            and_(
+                                Tag.name.in_(tags),
+                                bmarks_tags.c.tag_id == Tag.tid
+                            )
                         ).
                         join('bmarks', Bmark.bid == bmarks_tags.c.bmark_id)
                     ]).\
@@ -655,7 +659,7 @@ class Bmark(Base):
 
     def tag_string(self):
         """Generate a single spaced string of our tags"""
-        return " ".join([tag for tag in self.tags.iterkeys()])
+        return u" ".join([tag for tag in self.tags.iterkeys()])
 
     def update_tags(self, tag_string):
         """Given a tag string, split and update our tags to be these"""

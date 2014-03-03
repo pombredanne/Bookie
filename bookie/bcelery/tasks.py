@@ -22,9 +22,12 @@ INI = load_ini()
 initialize_sql(INI)
 
 
+logger = get_task_logger(__name__)
+
+
 @celery.task(ignore_result=True)
 def hourly_stats():
-    """Hourly we want to runa series of numbers to track
+    """Hourly we want to run a series of numbers to track
 
     Currently we're monitoring:
     - Total number of bookmarks in the system
@@ -38,10 +41,31 @@ def hourly_stats():
 
 
 @celery.task(ignore_result=True)
+def daily_stats():
+    """Daily we want to run a series of numbers to track
+
+    Currently we're monitoring:
+    - Total number of bookmarks for each user in the system
+
+    """
+    count_total_each_user.delay()
+
+
+@celery.task(ignore_result=True)
 def count_total():
     """Count the total number of bookmarks in the system"""
     trans = transaction.begin()
     StatBookmarkMgr.count_total_bookmarks()
+    trans.commit()
+
+
+@celery.task(ignore_result=True)
+def count_total_each_user():
+    """Count the total number of bookmarks for each user in the system"""
+    trans = transaction.begin()
+    user_list = UserMgr.get_list(active=True)
+    for user in user_list:
+        StatBookmarkMgr.count_user_bookmarks(user.username)
     trans.commit()
 
 
@@ -75,7 +99,6 @@ def importer_process(import_id):
     import_id = imp.id
 
     # Log that we've scheduled it
-    logger = get_task_logger('importer_process')
     logger.info("IMPORT: SCHEDULED for {0}.".format(imp.username))
     # We need to mark that it's running to prevent it getting picked up
     # again.
@@ -91,8 +114,6 @@ def importer_process_worker(import_id):
     :param import_id: import id we need to pull and work on
 
     """
-    logger = get_task_logger('importer_process_worker')
-
     trans = transaction.begin()
     import_job = ImportQueueMgr.get(import_id)
     logger.info("IMPORT: RUNNING for {username}".format(**dict(import_job)))
@@ -188,8 +209,6 @@ class BookmarkNotFoundException(Exception):
 @celery.task(ignore_result=True, default_retry_delay=30)
 def fulltext_index_bookmark(bid, content):
     """Insert bookmark data into the fulltext index."""
-    logger = get_task_logger('fulltext_index_bookmark')
-
     b = Bmark.query.get(bid)
 
     if not b:
@@ -197,7 +216,7 @@ def fulltext_index_bookmark(bid, content):
         fulltext_index_bookmark.retry(exc=BookmarkNotFoundException())
     else:
         from bookie.models.fulltext import get_writer
-        logger.warning('getting writer')
+        logger.debug('getting writer')
         writer = get_writer()
 
         if content:
@@ -216,7 +235,7 @@ def fulltext_index_bookmark(bid, content):
                 readable=found_content,
             )
             writer.commit()
-            logger.warning('writer commit')
+            logger.debug('writer commit')
         except (IndexingError, LockError), exc:
             # There was an issue saving into the index.
             logger.error(exc)
@@ -230,8 +249,7 @@ def fulltext_index_bookmark(bid, content):
 @celery.task(ignore_result=True)
 def reindex_fulltext_allbookmarks(sync=False):
     """Rebuild the fulltext index with all bookmarks."""
-    logger = get_task_logger('fulltext_index_bookmark')
-    logger.warning("Starting freshen of fulltext index.")
+    logger.debug("Starting freshen of fulltext index.")
 
     bookmarks = Bmark.query.all()
 
@@ -245,7 +263,6 @@ def reindex_fulltext_allbookmarks(sync=False):
 @celery.task(ignore_result=True)
 def fetch_unfetched_bmark_content(ignore_result=True):
     """Check the db for any unfetched content. Fetch and index."""
-    logger = get_task_logger('fetch_unfetched_bmark_content')
     logger.info("Checking for unfetched bookmarks")
 
     url_list = Bmark.query.outerjoin(
@@ -260,7 +277,6 @@ def fetch_unfetched_bmark_content(ignore_result=True):
 def fetch_bmark_content(bid):
     """Given a bookmark, fetch its content and index it."""
     trans = transaction.begin()
-    logger = get_task_logger('fetch_bmark_content')
 
     if not bid:
         raise Exception('missing bookmark id')
@@ -271,7 +287,7 @@ def fetch_bmark_content(bid):
 
     try:
         read = ReadUrl.parse(hashed.url)
-    except ValueError, exc:
+    except ValueError:
         # We hit this where urllib2 choked trying to get the protocol type of
         # this url to fetch it.
         logger.error('Could not parse url: ' + hashed.url)

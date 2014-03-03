@@ -1,4 +1,7 @@
 """Importers for bookmarks"""
+import os
+import random
+import string
 import time
 import transaction
 from datetime import datetime
@@ -8,13 +11,36 @@ from lxml import etree
 from lxml.etree import XMLSyntaxError
 
 from bookie.lib.urlhash import generate_hash
-from bookie.models import BmarkMgr
-from bookie.models import DBSession
-from bookie.models import InvalidBookmark
+from bookie.models import (
+    BmarkMgr,
+    DBSession,
+    InvalidBookmark,
+)
 
 
-IMPORTED = "importer"
+IMPORTED = u"importer"
 COMMIT_SIZE = 25
+
+
+def store_import_file(storage_dir, username, files):
+    # save the file off to the temp storage
+    out_dir = "{storage_dir}/{randdir}".format(
+        storage_dir=storage_dir,
+        randdir=random.choice(string.letters),
+    )
+
+    # make sure the directory exists
+    # we create it with parents as well just in case
+    if not os.path.isdir(out_dir):
+        os.makedirs(out_dir)
+
+    out_fname = "{0}/{1}.{2}".format(
+        out_dir, username, files.filename)
+    out = open(out_fname, 'w')
+    out.write(files.file.read())
+    out.close()
+
+    return out_fname
 
 
 class Importer(object):
@@ -61,9 +87,15 @@ class Importer(object):
         :param mark: Instance of Bmark that we're storing to db
 
         """
-        # we should make sure that this url isn't already bookmarked before
-        # adding it...if the hash matches, you must skip!
+        # If a bookmark has the tag "private" then we ignore it to prevent
+        # leaking user data.
+        if tags and 'private' in tags.lower().split(' '):
+            return None
+
         check_hash = generate_hash(url)
+
+        # We should make sure that this url isn't already bookmarked before
+        # adding it...if the hash matches, you must skip!
         if check_hash not in self.hash_list:
             bmark = BmarkMgr.store(
                 url,
@@ -72,14 +104,17 @@ class Importer(object):
                 ext,
                 tags,
                 dt=dt,
-                inserted_by=IMPORTED)
+                inserted_by=IMPORTED
+            )
 
-            # add this hash to the list so that we can skip dupes in the same
-            # import set
+            # Add this hash to the list so that we can skip dupes in the
+            # same import set.
             self.hash_list.add(check_hash)
             return bmark
-        else:
-            return None
+
+        # If we don't store a bookmark then just return None back to the
+        # importer.
+        return None
 
 
 class DelImporter(Importer):
@@ -112,7 +147,7 @@ class DelImporter(Importer):
         uses <h3> tags and Delicious does not in order to differentiate these
         two formats.
         """
-        delicious_doctype = "DOCTYPE NETSCAPE-Bookmark-file-1"
+        delicious_doctype = u'DOCTYPE NETSCAPE-Bookmark-file-1'
 
         soup = BeautifulSoup(file_io)
         can_handle = False
@@ -133,13 +168,18 @@ class DelImporter(Importer):
         for tag in soup.findAll('dt'):
             if 'javascript:' in str(tag):
                 continue
+
             # if we have a dd as next sibling, get it's content
             if tag.nextSibling and tag.nextSibling.name == 'dd':
                 extended = tag.nextSibling.text
             else:
-                extended = ""
+                extended = u""
 
             link = tag.a
+
+            # Skip any bookmarks with an attribute of PRIVATE.
+            if link.has_key('PRIVATE'):
+                continue
 
             import_add_date = float(link['add_date'])
 
@@ -150,14 +190,14 @@ class DelImporter(Importer):
 
             try:
                 bmark = self.save_bookmark(
-                    link['href'],
-                    link.text,
-                    extended,
-                    " ".join(link.get('tags', '').split(',')),
+                    unicode(link['href']),
+                    unicode(link.text),
+                    unicode(extended),
+                    u" ".join(unicode(link.get('tags', '')).split(u',')),
                     dt=add_date)
                 count = count + 1
                 DBSession.flush()
-            except InvalidBookmark, exc:
+            except InvalidBookmark:
                 bmark = None
 
             if bmark:
@@ -207,6 +247,7 @@ class DelXMLImporter(Importer):
         """
 
         try:
+            file_io.seek(0)
             parsed = etree.parse(file_io)
         except XMLSyntaxError:
             # IF etree can't parse it, it's not our file.
@@ -223,6 +264,7 @@ class DelXMLImporter(Importer):
         if self.file_handle.closed:
             self.file_handle = open(self.file_handle.name)
 
+        self.file_handle.seek(0)
         parsed = etree.parse(self.file_handle)
         count = 0
 
@@ -235,16 +277,16 @@ class DelXMLImporter(Importer):
 
             try:
                 bmark = self.save_bookmark(
-                    post.get('href'),
-                    post.get('description'),
-                    post.get('extended'),
-                    post.get('tag'),
+                    unicode(post.get('href')),
+                    unicode(post.get('description')),
+                    unicode(post.get('extended')),
+                    unicode(post.get('tag')),
                     dt=add_date)
                 count = count + 1
                 if bmark:
                     bmark.stored = bmark.stored.replace(tzinfo=None)
                     DBSession.flush()
-            except InvalidBookmark, exc:
+            except InvalidBookmark:
                 bmark = None
 
             if bmark:
@@ -298,6 +340,7 @@ class GBookmarkImporter(Importer):
         """
         if (file_io.closed):
             file_io = open(file_io.name)
+        file_io.seek(0)
         soup = BeautifulSoup(file_io)
         can_handle = False
         gbookmark_doctype = "DOCTYPE NETSCAPE-Bookmark-file-1"
@@ -351,11 +394,15 @@ class GBookmarkImporter(Importer):
                         else:
                             extended = ""
 
-                        # date the site was bookmarked
-                        if 'add_date' not in link:
+                        # Must use has_key here due to the link coming from
+                        # the parser and it's not a true dict.
+                        if link.has_key('add_date'):
+                            if int(link['add_date']) < 9999999999:
+                                timestamp_added = int(link['add_date'])
+                            else:
+                                timestamp_added = float(link['add_date']) / 1e6
+                        else:
                             link['add_date'] = time.time()
-
-                        timestamp_added = float(link['add_date']) / 1e6
 
                         urls[url] = {
                             'description': link.text,
@@ -370,13 +417,13 @@ class GBookmarkImporter(Importer):
         for url, metadata in urls.items():
             try:
                 bmark = self.save_bookmark(
-                    url,
-                    metadata['description'],
-                    metadata['extended'],
-                    " ".join(metadata['tags']),
+                    unicode(url),
+                    unicode(metadata['description']),
+                    unicode(metadata['extended']),
+                    u" ".join(metadata['tags']),
                     dt=metadata['date_added'])
                 DBSession.flush()
-            except InvalidBookmark, exc:
+            except InvalidBookmark:
                 bmark = None
             if bmark:
                 ids.append(bmark.bid)

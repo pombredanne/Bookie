@@ -920,6 +920,44 @@ YUI.add('bookie-view', function (Y) {
 
 
     /**
+     * Adding Javascript help for Bookmark Edit
+     *
+     * @class BmarkEditView
+     * @extends Y.View
+     *
+     */
+    ns.BmarkEditView = Y.Base.create('bmark-edit-view', Y.View, [], {
+
+        /**
+         * Checks if header is persent for the url if not add http:// to
+         * the url
+         *
+         * @method _check_and_edit_url
+         * @param {Event} e
+         *
+         */
+        _check_and_edit_url: function (e) {
+            string = e.target.value;
+		if(!(/^(f|ht)tps?:\/\//.test(string))){
+			string = "http://" + string;
+		}
+		e.target.value=string;
+        },
+
+        /**
+         * General initializer
+         *
+         * @method initializer
+         * @param none
+         *
+         */
+        initializer: function () {
+            Y.one('#url').set('onblur', this._check_and_edit_url);
+        }
+
+    });
+
+    /**
      * Generate the html view for a User's account
      *
      * @class AccountView
@@ -1407,22 +1445,39 @@ YUI.add('bookie-view', function (Y) {
             e.preventDefault();
             Y.one('#account_msg').hide();
 
-            // add the password data to the cfg passed to the api
-            api_cfg = Y.merge(api_cfg, {
-                name: Y.one('#name').get('value'),
-                email: Y.one('#email').get('value')
-            });
+            var name = Y.one('#name').get('value');
+            var email = Y.one('#email').get('value');
 
-            api = new Y.bookie.Api.route.UserAccountChange(api_cfg);
-            api.call({
-                success: function (data, request) {
-                    that._show_message('Account updated...', true);
-                },
-                error: function (data, status_str, response, args) {
-                    console.log(data);
-                    console.log(response);
+            // validate email and username
+            if (!name || !email) {
+                if (!name) {
+                    that._show_message(
+                        'Please enter valid name', false);
+                } else if (!email) {
+                    that._show_message(
+                        'Please enter valid email address', false);
                 }
-            });
+            } else {
+                // Add the password data to the cfg passed to the api.
+                api_cfg = Y.merge(api_cfg, {
+                    name: Y.one('#name').get('value'),
+                    email: Y.one('#email').get('value')
+                });
+
+                api = new Y.bookie.Api.route.UserAccountChange(api_cfg);
+                api.call({
+                    success: function (data, request) {
+                        that._show_message('Account updated...', true);
+                    },
+                    error: function (data, status_str, response, args) {
+                        console.log(data);
+                        console.log(response);
+                        that._show_message(
+                            'Some error ocurred while making changes...', false
+                        );
+                    }
+                });
+            }
         },
 
         /**
@@ -1570,6 +1625,8 @@ YUI.add('bookie-view', function (Y) {
                 error: function (data, status_str, response, args) {
                     console.log(data);
                     console.log(response);
+                    var responseJSON = JSON.parse(response.response);
+                    that._show_message(responseJSON.error);
                 }
             });
         },
