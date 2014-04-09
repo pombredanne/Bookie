@@ -952,9 +952,197 @@ YUI.add('bookie-view', function (Y) {
          *
          */
         initializer: function () {
-            Y.one('#url').set('onblur', this._check_and_edit_url);
+            // The url is not editable. So if we don't have the input, assume
+            // it's an edit and skip.
+            var url_input = Y.one('input#url');
+            if (url_input) {
+                url_input.on('onblur', this._check_and_edit_url);
+            }
         }
 
+    });
+
+    /**
+     * Generate the graph for user bookmark count
+     *
+     * @class UserBmarkCountView
+     * @extends Y.View
+     *
+     */
+    ns.UserBmarkCountView = Y.Base.create('user-bmark-count-view', Y.View, [], {
+
+        /**
+         * Handles the start and end dates when dates are changed.
+         *
+         * @method _date_range
+         * @private
+         *
+         */
+        _date_range: function(e) {
+            var dtdate = Y.DataType.Date;
+            var start_date = e.newSelection[0];
+            var end_date = e.newSelection[1];
+            if (start_date && end_date && (end_date < start_date)) {
+                var temp_date = start_date;
+                start_date = dtdate.format(end_date);
+                end_date = dtdate.format(temp_date);
+            }
+            else {
+                start_date = dtdate.format(start_date);
+                end_date = dtdate.format(end_date);
+            }
+            this.api_cfg = Y.merge(this.api_cfg, {
+                start_date: start_date,
+                end_date: end_date,
+            });
+            this._fetch_dataset();
+        },
+
+        /**
+         * Handles the json response after the api call
+         *
+         * @method _fetch_dataset
+         * @private
+         *
+         */
+        _fetch_dataset: function(data) {
+            var that = this;
+            this.api = new Y.bookie.Api.route.UserBmarkCount(this.api_cfg);
+            this.api.call({
+                success: function(data, request) {
+                    Y.one('#userstats_msg').setContent('');
+                    Y.one('#userstats_msg').hide();
+                    // Stores the data for the graph.
+                    var myDataValues = [];
+                    data.count.forEach(function(value) {
+                        myDataValues.push({
+                            date: value['tstamp'].split(' ')[0],
+                            bookmarks: value['data']
+                        });
+                    });
+                    var user_graph = Y.one('#bmark_count_graph');
+                    user_graph.setContent();
+                    var graph_render = new Y.Chart({
+                        dataProvider: myDataValues,
+                        axes: that.myAxes,
+                        seriesCollection: that.seriesCollection,
+                        render: user_graph
+                    });
+		},
+                error: function (data, status_str, response, args) {
+                    Y.one('#userstats_msg').show();
+                    Y.one('#userstats_msg').setContent('Error fetching the bookmark count');
+                }
+            });
+	},
+
+        /**
+         * Renders the calendar to the html view.
+         *
+         * @method _set_calendar
+         * @private
+         *
+         */
+        _set_calendar: function() {
+            Y.CalendarBase.CONTENT_TEMPLATE = Y.CalendarBase.TWO_PANE_TEMPLATE;
+            this.calendar = new Y.Calendar({
+                contentBox: "#calendar",
+                selectionMode: "multiple",
+                showPrevMonth: true,
+                showNextMonth: true,
+                date: new Date()}).render();
+            this.calendar.on('selectionChange',
+                             this._date_range,
+                             this
+                            );
+            this.calendar.set("headerRenderer", function (curDate) {
+                var ydate = Y.DataType.Date,
+                    output = ydate.format(curDate, {
+                        format: "%B %Y"
+                    }) + " &mdash; " + ydate.format(ydate.addMonths(curDate, 1), {
+                        format: "%B %Y"
+                    });
+                return output;
+            }); 
+       },
+
+        /**
+         * Sets the graph properties
+         *
+         * @method _graph_properties
+         * @private
+         *
+         */
+        _graph_properties: function() {
+            this.myAxes = {
+                bookmarks:{
+                    keys:["bookmarks"],
+                    position:"left",
+                    type:"numeric",
+                    minimum: 0,
+                    styles:{
+                        majorTicks:{
+                            display: "none"
+                        }
+                    }
+                },
+                dateRange:{
+                    keys:["date"],
+                    position:"bottom",
+                    type:"category",
+                    styles:{
+                        majorTicks:{
+                            display: "none"
+                        },
+                        label: {
+                            rotation:-45,
+                            margin:{top:5}
+                        }
+                    }
+                }
+            };
+
+            this.seriesCollection = [
+                {
+                    xAxis: "dateRange",
+                    yAxis: "bookmarks",
+                    xKey: "date",
+                    yKey: "bookmarks",
+                    xDisplayName: "Date",
+                    yDisplayName: "Bookmarks"
+                }
+            ];
+
+        },
+
+        initializer: function (cfg) {
+            this.api_cfg = this.get('api_cfg');
+            this._graph_properties();
+            this.get('container');
+        },
+
+        /**
+         * Build the UI for the result set we have
+         *
+         * @method render
+         *
+         */
+        render: function() {
+            this._set_calendar();
+            this._fetch_dataset();
+        }
+    }, {
+        ATTRS: {
+            /**
+             * @attribute api_cfg
+             * @default undefined
+             * @type Object
+             *
+             */
+            api_cfg: {
+                required: true
+            }
+        }
     });
 
     /**
@@ -1859,7 +2047,14 @@ YUI.add('bookie-view', function (Y) {
                             opts.set('cache_content', 'false');
                         }
 
-                        // one updated, now save it
+                        // Set the flag so that it doesn't bug the user
+                        // for the configuration every single time.
+                        chrome.storage.local.set({
+                            "optionsConfigured": true
+                        });
+                        
+                        // Now that we have updated the settings in memory, 
+                        // do the same with offline chrome.storage
                         opts.save();
                         that._show_message('Saved your settings...', true);
                     } else {

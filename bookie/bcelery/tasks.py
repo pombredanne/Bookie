@@ -12,15 +12,16 @@ from bookie.lib.importer import Importer
 from bookie.lib.readable import ReadUrl
 from bookie.models import initialize_sql
 from bookie.models import Bmark
+from bookie.models import BmarkMgr
 from bookie.models import Readable
 from bookie.models.auth import UserMgr
 from bookie.models.stats import StatBookmarkMgr
 from bookie.models.queue import ImportQueueMgr
 
 from .celery import load_ini
+
 INI = load_ini()
 initialize_sql(INI)
-
 
 logger = get_task_logger(__name__)
 
@@ -49,6 +50,16 @@ def daily_stats():
 
     """
     count_total_each_user.delay()
+    delete_non_activated_account.delay()
+
+
+@celery.task(ignore_result=True)
+def delete_non_activated_account():
+    """Delete user accounts which are not verified since
+    30 days of signup"""
+    trans = transaction.begin()
+    UserMgr.delete_non_activated_account()
+    trans.commit()
 
 
 @celery.task(ignore_result=True)
@@ -82,6 +93,14 @@ def count_tags():
     """Count the total number of tags in the system"""
     trans = transaction.begin()
     StatBookmarkMgr.count_total_tags()
+    trans.commit()
+
+
+@celery.task(ignore_result=True)
+def delete_all_bookmarks(username):
+    """ Deletes all bookmarks for the current user"""
+    trans = transaction.begin()
+    BmarkMgr.delete_all_bookmarks(username)
     trans.commit()
 
 
@@ -191,8 +210,8 @@ def email_signup_user(email, msg, settings, message_data):
     :param iid: import id we need to pull and work on
 
     """
-    from bookie.lib.message import InvitationMsg
-    msg = InvitationMsg(email, msg, settings)
+    from bookie.lib.message import ActivationMsg
+    msg = ActivationMsg(email, msg, settings)
     status = msg.send(message_data)
     if status == 4:
         from bookie.lib.applog import SignupLog
@@ -267,7 +286,7 @@ def fetch_unfetched_bmark_content(ignore_result=True):
 
     url_list = Bmark.query.outerjoin(
         Readable, Bmark.readable).\
-        filter(Readable.imported == None).all()
+        filter(Readable.imported.is_(None)).all()
 
     for bmark in url_list:
         fetch_bmark_content.delay(bmark.bid)
@@ -326,7 +345,7 @@ def fetch_bmark_content(bid):
     else:
         logger.error(
             'No readable record for bookmark: ',
-            str(bid, bmark.hashed.url))
+            str(bid), str(bmark.hashed.url))
 
         # There was a failure reading the thing.
         bmark.readable = Readable()

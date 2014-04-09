@@ -694,6 +694,49 @@ YUI.add('bookie-api', function (Y) {
         }
     );
 
+    /**
+     * Fetch user bookmark count over a period of time
+     *
+     * @class Api.route.UserBmarkCount
+     * @extends Api.route
+     *
+     */
+    Y.bookie.Api.route.UserBmarkCount = Y.Base.create(
+        'bookie-api-route-user-bmark-count',
+        Y.bookie.Api.route,
+        [], {
+            initializer: function (cfg) {
+                if (this.get('start_date') && this.get('end_date')) {
+                    this.data = {
+                        start_date: this.get('start_date'),
+                        end_date: this.get('end_date')
+                    };
+		}
+                else if (this.get('start_date') && !this.get('end_date')) {
+                    this.data = {
+                        start_date: this.get('start_date'),
+                    };
+                }
+                else if (!this.get('start_date') && this.get('end_date')) {
+                    this.data = {
+                        end_date: this.get('end_date'),
+                    };
+                }
+            }
+        }, {
+            ATTRS: {
+                start_date: {
+                    required: true
+                },
+                end_date: {
+                    required: true
+                },
+                url_element: {
+                    value: '/{username}/stats/bmarkcount'
+                }
+            }
+        }
+    );
 
     /**
      * Change a user's password to a new value.
@@ -975,10 +1018,17 @@ YUI.add('bookie-api', function (Y) {
                     value: '/bmarks/search',
                     getter: function () {
                         var ret;
-                        if (this.get('phrase').length) {
+
+                        /* Parse all terms in 'phrase', escape chars and copy to a new Array */
+                        var terms = new Array();
+                        Y.Array.each(this.get('phrase'), function(term) {
+                            Array.prototype.push.call(terms, encodeURIComponent(term));
+                        });
+
+                        if (terms.length) {
                             ret = [
                                 '/bmarks/search',
-                                this.get('phrase').join('/')
+                                terms.join('/')
                             ].join('/');
                         } else {
                             ret = '/bmarks/search';
@@ -1043,10 +1093,17 @@ YUI.add('bookie-api', function (Y) {
                     value: '/{username}/bmarks/search',
                     getter: function () {
                         var ret;
-                        if (this.get('phrase').length) {
+
+                        /* Parse all terms in 'phrase', escape chars and copy to a new Array */
+                        var terms = new Array();
+                        Y.Array.each(this.get('phrase'), function(term) {
+                            Array.prototype.push.call(terms, encodeURIComponent(term));
+                        });
+                                                
+                        if (terms.length) {
                             ret = [
                                 '/{username}/bmarks/search',
-                                this.get('phrase').join('/')
+                                terms.join('/')
                             ].join('/');
                         } else {
                             ret = '/{username}/bmarks/search';

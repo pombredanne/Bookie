@@ -2,6 +2,11 @@
 
 """
 import logging
+from urllib import (
+    quote,
+    urlencode,
+)
+import transaction
 
 from bookie.models import DBSession
 from bookie.models.auth import Activation
@@ -11,6 +16,7 @@ from bookie.models.auth import UserMgr
 from bookie.tests import gen_random_word
 from bookie.tests import TestDBBase
 from bookie.tests import TestViewBase
+
 
 LOG = logging.getLogger(__name__)
 
@@ -95,7 +101,7 @@ class TestOpenSignup(TestViewBase):
         res = self.app.post('/signup_process')
         self.assertIn('Please supply', res.body)
 
-    def testEmailNotAlreadyThere(self):
+    def testEmailAlreadyThere(self):
         """Signup requires an email entry."""
         res = self.app.post(
             '/signup_process',
@@ -104,6 +110,85 @@ class TestOpenSignup(TestViewBase):
             }
         )
         self.assertIn('already signed up', res.body)
+
+    def testEmailIsLowercase(self):
+        """Signup saves email as all lowercase"""
+        res = self.app.post(
+            '/signup_process',
+            params={
+                'email': 'CAPITALTesting@Dummy.cOm'
+            }
+        )
+        self.assertIn('capitaltesting@dummy.com', res.body)
+
+    def testUsernameAlreadyThere(self):
+        """Signup requires an unique username entry."""
+        email = 'testing@gmail.com'
+        new_user = UserMgr.signup_user(email, u'invite')
+        DBSession.add(new_user)
+
+        transaction.commit()
+
+        user = DBSession.query(User).filter(User.username == email).one()
+
+        url = quote('/{0}/reset/{1}'.format(
+            user.email,
+            user.activation.code
+        ))
+
+        res = self.app.post(
+            url,
+            params={
+                'password': u'testing',
+                'username': user.username,
+                'code': user.activation.code,
+                'new_username': u'admin',
+            })
+        self.assertIn('Username already', res.body)
+
+    def testResetFormDisplay(self):
+        """Make sure you can GET the reset form."""
+        email = 'testing@gmail.com'
+        new_user = UserMgr.signup_user(email, u'invite')
+        DBSession.add(new_user)
+
+        transaction.commit()
+
+        user = DBSession.query(User).filter(User.username == email).one()
+
+        url = quote('/{0}/reset/{1}'.format(
+            user.email,
+            user.activation.code
+        ))
+
+        res = self.app.get(url)
+        self.assertIn('Activate', res.body)
+
+    def testUsernameIsLowercase(self):
+        """Signup saves username as all lowercase"""
+        email = 'TestingUsername@test.com'
+        new_user = UserMgr.signup_user(email, u'testcase')
+        DBSession.add(new_user)
+
+        transaction.commit()
+
+        user = DBSession.query(User).filter(
+            User.username == email.lower()).one()
+
+        params = {
+            'password': u'testing',
+            'username': user.username,
+            'code': user.activation.code,
+            'new_username': 'TESTLowercase'
+        }
+        url = '/api/v1/suspend?' + urlencode(params, True)
+
+        # Activate the user, setting their new username which we want to
+        # verify does get lower cased during this process.
+        self.app.delete(url)
+
+        user = DBSession.query(User).filter(User.email == email.lower()).one()
+        self.assertIn('testlowercase', user.username)
 
     def testSignupWorks(self):
         """Signing up stores an activation."""

@@ -126,6 +126,8 @@ def signup_process(request):
                 'email': 'Please supply an email address to sign up.'
             }
         }
+    else:
+        email = email.lower()
 
     # first see if the user is already in the system
     exists = UserMgr.get(email=email)
@@ -180,6 +182,7 @@ def reset(request):
     username = rdict.get('username', None)
     activation_key = rdict.get('reset_key', None)
     user = ActivationMgr.get_user(username, activation_key)
+    new_username = None
 
     if user is None:
         # just 404 if we don't have an activation code for this user
@@ -194,7 +197,21 @@ def reset(request):
         new_username = params.get('new_username', None)
         error = None
 
-        if not UserMgr.acceptable_password(password):
+    if new_username:
+        new_username = new_username.lower()
+
+        # Check whether username exists or not.  During signup request , a
+        # record of current user is created with username as his email id
+        # which is already checked for uniqueness. So when new_username is
+        # equal to username ie the email id then no need to check for
+        # uniqueness , but if new_username is something else it has to be
+        # verified
+
+        if username != new_username and \
+                UserMgr.get(username=new_username) is not None:
+            # Set an error message to the template.
+            error = "Username already exists."
+        elif not UserMgr.acceptable_password(password):
             # Set an error message to the template.
             error = "Come on, pick a real password please."
         else:

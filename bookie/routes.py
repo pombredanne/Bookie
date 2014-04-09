@@ -49,6 +49,9 @@ def build_routes(config):
                      "{username}/edit_error/{hash_id}")
     config.add_route("user_bmark_new", "{username}/new")
     config.add_route("user_bmark_new_error", "{username}/new_error")
+    config.add_route(
+        "user_delete_all_bookmarks",
+        "{username}/account/delete_all_bookmarks")
 
     # config.add_route("bmark_delete", "/bmark/delete")
     # config.add_route("bmark_confirm_delete", "/bmark/confirm/delete/{bid}")
@@ -83,6 +86,7 @@ def build_routes(config):
 
     config.add_route("user_account", "{username}/account")
     config.add_route("user_export", "{username}/export")
+    config.add_route("user_stats", "{username}/stats")
 
     #
     # NEW API
@@ -137,10 +141,6 @@ def build_routes(config):
     config.add_route('api_bmarks_user_tags', 'api/v1/{username}/bmarks/*tags')
     config.add_route('api_count_bmarks_user',
                      'api/v1/{username}/stats/bmarkcount')
-
-    config.add_route('api_bmarks_popular', 'api/v1/bmarks/popular')
-    config.add_route('api_bmarks_popular_user',
-                     'api/v1/{username}/bmarks/popular')
 
     # user bookmark api calls
     config.add_route("api_bmark_add",
@@ -209,6 +209,16 @@ def build_routes(config):
         "api_admin_applog",
         "/api/v1/a/applog/list",
         request_method="GET")
+
+    config.add_route(
+        "api_admin_non_activated",
+        "/api/v1/a/nonactivated",
+        request_method="GET")
+
+    config.add_route(
+        "api_admin_delete_non_activated",
+        "/api/v1/a/nonactivated",
+        request_method="DELETE")
 
     # these are single word matching, they must be after /recent /popular etc
     config.add_route("user_home", "{username}")

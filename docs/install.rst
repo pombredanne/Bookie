@@ -15,13 +15,26 @@ and your distro for the following:
     $ make run
     $ (YOUR BROWSER) http://127.0.0.1:6543/
 
+
+You should have JavaScipt enabled.
+
+Login as admin
+::
+    user: admin
+    pass: admin
+
+You can create new users by writing a script or going through the signup process.
+You just need to install inbox (bin/pip install inbox) and run make smtp to get a 
+fake email server to catch the activation emails.
+
+
 Where to go from here
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 Getting your bookmarks into Bookie
 -----------------------------------
 Well, you might want to import a backup of your delicious bookmarks. You can do
-that by vising the *Import* link in the footer of your site installation. Make
+that by visiting the *Import* link in the footer of your site installation. Make
 sure you know the API key that you've set in your bookie install's *.ini*
 configuration file.
 
