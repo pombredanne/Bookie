@@ -47,7 +47,7 @@ YUI.add('bookie-api', function (Y) {
      */
     ns.request_handler = function (url, cfg, args) {
         // extend with the base handlers for each event we want to use
-        // should have cases for zomplete, success, failure
+        // should have cases for complete, success, failure
         // Note: complete fires before both success and failure, not usually
         // the event you want
         var request,
@@ -113,28 +113,28 @@ YUI.add('bookie-api', function (Y) {
      *
      */
     Y.bookie.Api = Y.Base.create('bookie-api', Y.Base, [], {
-        base_cfg: {
-            method: "GET",
-            data: {},
-            headers: {
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            },
-            on: {
-                start: function () {},
-                complete: function () {},
-                end: function () {}
-            },
-            args: {}
-        },
-
         /**
          * General constructor
          * @method initializer
          * @constructor
          *
          */
-        initializer : function (cfg) {},
+        initializer : function (cfg) {
+            this.base_cfg = {
+                method: "GET",
+                data: {},
+                headers: {
+                    "Content-Type": "application/json",
+                    "Accept": "application/json"
+                },
+                on: {
+                    start: function () {},
+                    complete: function () {},
+                    end: function () {}
+                },
+                args: {}
+            };
+        },
 
         /**
          * Generate a full api url to call
@@ -150,14 +150,20 @@ YUI.add('bookie-api', function (Y) {
          *
          */
         build_url: function (data) {
+            var resource = this.get('resource');
+
             // make sure the username is in the config as well
             if (Y.Lang.isObject(data)) {
                 data.username = this.get('username');
-                data.resource = this.get('resource');
+                if (resource) {
+                    data.resource = resource;
+                }
             } else {
                 data = {};
                 data.username = this.get('username');
-                data.resource = this.get('resource');
+                if (resource) {
+                    data.resource = resource;
+                }
             }
 
             return this.get('url') +
@@ -411,7 +417,7 @@ YUI.add('bookie-api', function (Y) {
         Y.bookie.Api.route,
         [], {
             /**
-             * Perform the actually ajax request.
+             * Perform the actual ajax request.
              *
              * @method call
              * @param {Object} callbacks
@@ -424,7 +430,6 @@ YUI.add('bookie-api', function (Y) {
                 this.set('options', {
                     data: {
                         tag: tag_stub,
-
                         current: current_tags
                     }
                 });
@@ -529,7 +534,8 @@ YUI.add('bookie-api', function (Y) {
                 this.data = {
                     hash_id: this.get('hash_id'),
                     username: this.get('username'),
-                    last_bmark: this.get('last_bmark')
+                    url: cfg.tab_url,
+                    description: cfg.tab_title
                 };
             }
         }, {
@@ -567,17 +573,31 @@ YUI.add('bookie-api', function (Y) {
                 },
 
                 /**
-                 * If we want, we can set this to true to get the tags from
-                 * our last bookmark as something of a suggestion for the
-                 * current.
+                 * We suggest tags based on the title of the page
+                 * If the page has no title , url will be sent in
+                 * place of title.
                  *
-                 * @attribute last_bmark
-                 * @default true
-                 * @type Boolean
+                 * @attribute description
+                 * @default undefined
+                 * @required
+                 * @type String
                  *
                  */
-                last_bmark: {
-                    value: false
+                description: {
+                    required: true
+                },
+
+                /**
+                 * We suggest tags based on the url of the page
+                 *
+                 * @attribute description
+                 * @default undefined
+                 * @required
+                 * @type String
+                 *
+                 */
+                url: {
+                    required: true
                 }
             }
         }
@@ -695,6 +715,98 @@ YUI.add('bookie-api', function (Y) {
     );
 
     /**
+     * Request a new API key.
+     *
+     * @class Api.route.NewApiKey
+     * @extends Api.route
+     *
+     */
+    Y.bookie.Api.route.NewApiKey = Y.Base.create(
+        'bookie-api-route-new-api-key',
+        Y.bookie.Api.route,
+        [], {
+            initializer: function (cfg) {
+                this.base_cfg.method = 'POST';
+            }
+        }, {
+            ATTRS: {
+                /**
+                 * @attribute username
+                 * @default undefined
+                 * @required
+                 * @type String
+                 *
+                 */
+                username: {
+                    required: true
+                },
+
+                /**
+                 * @attribute api_key
+                 * @default undefined
+                 * @required
+                 * @type String
+                 *
+                 */
+                api_key: {
+                    required: true
+                },
+
+                url_element: {
+                    value: '/{username}/api_key'
+                }
+            }
+        }
+    );
+
+
+    /**
+     * Fetch stats about the number of users on the site.
+     *
+     * @class Api.route.UserStats
+     * @extends Api.route
+     *
+     */
+    Y.bookie.Api.route.UserStats = Y.Base.create(
+        'bookie-api-route-user-stats',
+        Y.bookie.Api.route,
+        [], {
+            initializer: function (cfg) {
+            }
+        }, {
+            ATTRS: {
+                url_element: {
+                    value: '/stats/users'
+                }
+            }
+        }
+    );
+
+
+    /**
+     * Fetch stats about the number of bookmarks on the site.
+     *
+     * @class Api.route.BookmarkStats
+     * @extends Api.route
+     *
+     */
+    Y.bookie.Api.route.BookmarkStats = Y.Base.create(
+        'bookie-api-route-bookmark-stats',
+        Y.bookie.Api.route,
+        [], {
+            initializer: function (cfg) {
+            }
+        }, {
+            ATTRS: {
+                url_element: {
+                    value: '/stats/bookmarks'
+                }
+            }
+        }
+    );
+
+
+    /**
      * Fetch user bookmark count over a period of time
      *
      * @class Api.route.UserBmarkCount
@@ -711,7 +823,7 @@ YUI.add('bookie-api', function (Y) {
                         start_date: this.get('start_date'),
                         end_date: this.get('end_date')
                     };
-		}
+                }
                 else if (this.get('start_date') && !this.get('end_date')) {
                     this.data = {
                         start_date: this.get('start_date'),
@@ -1020,7 +1132,7 @@ YUI.add('bookie-api', function (Y) {
                         var ret;
 
                         /* Parse all terms in 'phrase', escape chars and copy to a new Array */
-                        var terms = new Array();
+                        var terms = [];
                         Y.Array.each(this.get('phrase'), function(term) {
                             Array.prototype.push.call(terms, encodeURIComponent(term));
                         });
@@ -1095,11 +1207,11 @@ YUI.add('bookie-api', function (Y) {
                         var ret;
 
                         /* Parse all terms in 'phrase', escape chars and copy to a new Array */
-                        var terms = new Array();
+                        var terms = [];
                         Y.Array.each(this.get('phrase'), function(term) {
                             Array.prototype.push.call(terms, encodeURIComponent(term));
                         });
-                                                
+
                         if (terms.length) {
                             ret = [
                                 '/{username}/bmarks/search',

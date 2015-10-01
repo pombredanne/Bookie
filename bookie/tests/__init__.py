@@ -20,6 +20,10 @@ from bookie.models.applog import AppLog
 from bookie.models.auth import Activation
 from bookie.models.auth import User
 from bookie.models.queue import ImportQueue
+from bookie.models.social import (
+    BaseConnection,
+    TwitterConnection,
+)
 from bookie.models.stats import StatBookmark
 from bookie.models.fulltext import _reset_index
 
@@ -35,6 +39,7 @@ if not test_ini:
 
 ini.read(test_ini)
 settings = dict(ini.items('app:bookie'))
+from bookie.models import initialize_sql
 # Setup logging to read from the test ini file.
 fileConfig(test_ini)
 LOG = logging.getLogger(__name__)
@@ -65,6 +70,7 @@ def gen_random_word(wordLen):
 class TestDBBase(unittest.TestCase):
     def setUp(self):
         """Setup Tests"""
+        initialize_sql(settings)
         testing.setUp()
         self.trans = transaction.begin()
 
@@ -85,7 +91,8 @@ class TestViewBase(unittest.TestCase):
         app = get_app(BOOKIE_TEST_INI, 'bookie')
         from webtest import TestApp
         self.app = TestApp(app)
-        testing.setUp()
+        self.config = testing.setUp()
+        self.config.include('pyramid_mako')
         res = DBSession.execute(
             "SELECT api_key FROM users WHERE username = 'admin'").\
             fetchone()
@@ -114,6 +121,11 @@ def empty_db():
     Readable.query.delete()
     Bmark.query.delete()
     StatBookmark.query.delete()
+    # BaseConnection and TwitterConnection should be individually
+    # deleted https://bitbucket.org/zzzeek/sqlalchemy/issue/2349
+    BaseConnection.query.delete()
+    TwitterConnection.query.delete()
+
     Tag.query.delete()
     # we can't remove the toread tag we have from our commands
     Hashed.query.delete()

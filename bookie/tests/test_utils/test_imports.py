@@ -40,8 +40,17 @@ class TestImports(unittest.TestCase):
             19,
             "We should have 19 results, we got: " + str(len(res)))
 
+        # Check for the private bookmarks.
+        private_res = Bmark.query.filter(Bmark.is_private == True).all()   # noqa
+        self.assertEqual(
+            len(private_res),
+            1,
+            "We should have 1 private bookmark: " + str(len(private_res)))
+
         # verify we can find a bookmark by url and check tags, etc
         check_url = u'http://www.ndftz.com/nickelanddime.png'
+        url_description = u'nickelanddime.png (PNG Image, 1200x1400 pixels)' \
+                          u' - Scaled (64%) - "Test"'
         check_url_hashed = generate_hash(check_url)
         found = Bmark.query.filter(Bmark.hash_id == check_url_hashed).one()
 
@@ -66,6 +75,12 @@ class TestImports(unittest.TestCase):
             "description" in found.extended,
             "The extended attrib should have a nice long string in it")
 
+        # verify html entities in descriptioin are decoded
+        self.assertEqual(
+            url_description,
+            found.description,
+            "The description of URL should not have any XML/HTML entities")
+
     def _delicious_xml_data_test(self):
         """Test that we find the correct google bmark data after import"""
         res = Bmark.query.all()
@@ -73,6 +88,13 @@ class TestImports(unittest.TestCase):
             len(res),
             25,
             "We should have 25 results, we got: " + str(len(res)))
+
+        # Check for the private bookmarks.
+        private_res = Bmark.query.filter(Bmark.is_private == True).all()   # noqa
+        self.assertEqual(
+            len(private_res),
+            20,
+            "We should have 20 private bookmarks: " + str(len(private_res)))
 
         # verify we can find a bookmark by url and check tags, etc
         check_url = 'http://jekyllrb.com/'
@@ -106,6 +128,7 @@ class TestImports(unittest.TestCase):
         # verify we can find a bookmark by url and check tags, etc
         check_url = 'http://www.alistapart.com/'
         check_url_hashed = generate_hash(check_url)
+        url_description = u'A List Apart "Test"'
         found = Bmark.query.filter(Bmark.hash_id == check_url_hashed).one()
 
         self.assertTrue(
@@ -124,6 +147,12 @@ class TestImports(unittest.TestCase):
         self.assertTrue(
             "make websites" in found.extended,
             "'make websites' should be in the extended description")
+
+        # verify html entities in descriptioin are decoded
+        self.assertEqual(
+            url_description,
+            found.description,
+            "The description of URL should not have any XML/HTML entities")
 
     def _chrome_data_test(self):
         """Test that we find the correct Chrome bmark data after import"""

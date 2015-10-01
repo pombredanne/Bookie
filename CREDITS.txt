@@ -26,3 +26,7 @@ Thanks to these people that have contributed code/assistance to bookie
 - Sambuddha Basu
 - Fernando César
 - Jelmer Vernooij
+- Kyle Adams
+- Surya Pappoppula
+- Yash Mehrotra
+- Anish Shah

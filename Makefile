@@ -7,7 +7,7 @@ PEP8 := $(PY) bin/pep8
 PIP := $(PY) bin/pip
 PIP_MIR = PIP_FIND_LINKS='http://mypi http://simple.crate.io/'
 NOSE := $(PY) bin/nose2
-PYTEST := $(PY) bin/py.test
+PYTEST := $(PY) bin/py.test -q --tb=short
 PASTER := $(PY) bin/pserve
 PYSCSS := $(PY) bin/pyscss
 GUNICORN := $(PY) bin/gunicorn
@@ -17,6 +17,7 @@ BOOKIE_INI = bookie.ini
 SAURL = $(shell grep sqlalchemy.url $(BOOKIE_INI) | cut -d "=" -f 2 | tr -d " ")
 
 CACHE := "$(WD)/download-cache"
+NLTK_DATA := "$(WD)/download-cache/nltk"
 BOOKIE_JS = bookie/static/js/bookie
 JS_BUILD_PATH = bookie/static/js/build
 JS_META_SCRIPT = $(PY) scripts/js/generate_meta.py
@@ -80,7 +81,7 @@ sysdeps:
 	fi
 
 .PHONY: install
-install: $(BOOKIE_INI) all first_bookmark css
+install: $(BOOKIE_INI) all css first_bookmark
 
 .PHONY: develop
 develop: lib/python*/site-packages/bookie.egg-link
@@ -140,9 +141,13 @@ docs_open: docs
 tags:
 	ctags --tag-relative --python-kinds=-iv -Rf tags-py --sort=yes --exclude=.git --languages=python
 
+
+bin/flake8: bin/python
+	$(PIP) install -r dev-requirements.txt
+
 .PHONY: lint
-lint:
-	flake8 bookie/
+lint: bin/flake8
+	bin/flake8 bookie/
 
 # DEPS
 #
@@ -153,11 +158,14 @@ deps: venv
 	@echo "\n\nSilently installing packages (this will take a while)..."
 	if test -d download-cache; \
 		then cd download-cache && git pull origin master || true; \
-		else git clone --depth=1 "http://github.com/mitechie/bookie-download-cache.git" download-cache; \
+		else git clone --depth=1 "http://github.com/bookieio/bookie-download-cache.git" download-cache; \
 	fi
 	@echo "Making sure the latest version of pip is available"
 	# $(PIP) install -U pip
 	$(PIP) install --no-index --no-dependencies --find-links file:///$(CACHE)/python -r requirements.txt
+	# Fetch the nltk data we need.
+	mkdir $(NLTK_DATA) || true
+	NLTK_DATA=$(NLTK_DATA) $(PY) -m textblob.download_corpora lite
 
 # TESTS
 #
@@ -167,13 +175,20 @@ deps: venv
 smtp:
 	$(PY) scripts/misc/smtpsink.py
 
+bin/py.test:
+	$(PIP) install -r dev-requirements.txt
+
 .PHONY: test
-test:
-	INI="test.ini" $(PYTEST) -s bookie/tests
+test: bin/py.test
+	INI="test.ini" NLTK_DATA=$(NLTK_DATA) $(PYTEST) -s bookie/tests
 
 .PHONY: testcoverage
-testcoverage:
-	$(NOSE) --with-coverage --cover-html --cover-package=bookie bookie/tests
+testcoverage: bin/py.test
+	NLTK_DATA=$(NLTK_DATA) $(PYTEST) --cov=bookie -s bookie/tests
+
+.PHONY: testcoverage-html
+testcoverage-html: bin/py.test
+	NLTK_DATA=$(NLTK_DATA) $(PYTEST) --cov-report=html --cov=bookie -s bookie/tests
 
 .PHONY: clean_testdb
 clean_testdb:
@@ -185,7 +200,7 @@ builder_test: clean_testdb test_bookie.db
 	$(NOSE) -v --with-coverage --with-id --cover-package=bookie --cover-erase --with-xunit bookie/tests
 
 .PHONY: mysql_test
-mysql_test:
+mysql_test: bin/py.test
 	$(PIP_MIR) $(PIP) install PyMySQL
 	mysql -u jenkins_bookie --password=bookie -e "DROP DATABASE jenkins_bookie;"
 	mysql -u jenkins_bookie --password=bookie -e "CREATE DATABASE jenkins_bookie;"
@@ -193,14 +208,14 @@ mysql_test:
 	BOOKIE_TEST_INI=test_mysql.ini $(NOSE) -xv --with-coverage --cover-package=bookie --cover-erase --with-xunit bookie/tests
 
 .PHONY: pgsql_test
-pgsql_test:
-	#$(PIP_MIR) $(PIP) install PyMySQL
-	#mysql -u jenkins_bookie --password=bookie -e "DROP DATABASE jenkins_bookie;"
-	#mysql -u jenkins_bookie --password=bookie -e "CREATE DATABASE jenkins_bookie;"
-	bin/alembic -c test_alembic_pgsql.ini upgrade head
-	BOOKIE_TEST_INI=test_pgsql.ini $(NOSE) -xv --with-coverage --cover-package=bookie --cover-erase --with-xunit bookie/tests
-
-
+pgsql_test: bin/py.test
+	# dropdb bookie || true
+	# dropuser jenkins_bookie || true
+	# createdb -U rharding bookie
+	# psql -c "CREATE USER jenkins_bookie WITH PASSWORD 'bookie';" template1
+	# psql -c "GRANT ALL PRIVILEGES ON DATABASE bookie to jenkins_bookie;" template1
+	# bin/alembic -c test_alembic_pgsql.ini upgrade head
+	BOOKIE_TEST_INI=test_pgsql.ini INI="test_pgsql.ini" NLTK_DATA=$(NLTK_DATA) $(PYTEST) -s bookie/tests
 
 .PHONY: jstestserver
 jstestserver:
@@ -234,6 +249,9 @@ test_tagcontrol:
 .PHONY: test_userstats
 test_userstats:
 	xdg-open $(JSTESTURL)/test_user_stats.html
+.PHONY: test_stats
+test_stats:
+	xdg-open $(JSTESTURL)/test_stats.html
 .PHONY: test_view
 test_view:
 	xdg-open $(JSTESTURL)/test_view.html
@@ -367,7 +385,7 @@ run_prod:
 	$(PASTER) --pid-file=app.pid $(BOOKIE_INI) &
 .PHONY: run_app
 run_app:
-	$(PASTER) --reload $(BOOKIE_INI)
+	NLTK_DATA=$(NLTK_DATA) $(PASTER) --reload $(BOOKIE_INI)
 .PHONY: run_livereload
 run_livereload:
 	livereload

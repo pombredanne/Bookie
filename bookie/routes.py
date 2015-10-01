@@ -88,9 +88,20 @@ def build_routes(config):
     config.add_route("user_export", "{username}/export")
     config.add_route("user_stats", "{username}/stats")
 
+    # oauth urls
+    config.add_route("twitter_connect", "oauth/twitter_connect")
+
     #
     # NEW API
     #
+
+    # stats
+    config.add_route('api_bookmark_stats',
+                     '/api/v1/stats/bookmarks',
+                     request_method='GET')
+    config.add_route('api_user_stats',
+                     '/api/v1/stats/users',
+                     request_method='GET')
 
     # ping checks
     config.add_route('api_ping',
@@ -111,7 +122,11 @@ def build_routes(config):
                      "/api/v1/{username}/account",
                      request_method="POST")
     config.add_route("api_user_api_key",
-                     "/api/v1/{username}/api_key")
+                     "/api/v1/{username}/api_key",
+                     request_method="GET")
+    config.add_route("api_reset_api_key",
+                     "/api/v1/{username}/api_key",
+                     request_method="POST")
     config.add_route("api_user_reset_password",
                      "/api/v1/{username}/password",
                      request_method="POST")
@@ -163,6 +178,9 @@ def build_routes(config):
     config.add_route("api_tag_complete",
                      "/api/v1/tags/complete")
 
+    config.add_route("api_social_connections",
+                     "/api/v1/{username}/social_connections")
+
     # admin api calls
     config.add_route("api_admin_readable_todo", "/api/v1/a/readable/todo")
     config.add_route(
@@ -187,6 +205,14 @@ def build_routes(config):
         "api_admin_imports_reset",
         "/api/v1/a/imports/reset/{id}",
         request_method="POST")
+    config.add_route(
+        "api_admin_twitter_refresh_all",
+        "/api/v1/a/social/twitter_refresh/all",
+        request_method="GET")
+    config.add_route(
+        "api_admin_twitter_refresh",
+        "/api/v1/a/social/twitter_refresh/{username}",
+        request_method="GET")
 
     config.add_route(
         "api_admin_users_list",

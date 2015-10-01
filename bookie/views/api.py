@@ -16,13 +16,18 @@ from bookie.lib.message import ReactivateMsg
 from bookie.lib.message import ActivationMsg
 from bookie.lib.readable import ReadContent
 from bookie.lib.tagcommands import Commander
+from bookie.lib.utils import suggest_tags
 
-from bookie.models import Bmark
-from bookie.models import BmarkMgr
-from bookie.models import DBSession
-from bookie.models import NoResultFound
-from bookie.models import Readable
-from bookie.models import TagMgr
+from bookie.models import (
+    bmarks_tags,
+    Bmark,
+    BmarkMgr,
+    DBSession,
+    Hashed,
+    NoResultFound,
+    Readable,
+    TagMgr,
+)
 from bookie.models.applog import AppLogMgr
 from bookie.models.auth import ActivationMgr
 from bookie.models.auth import get_random_word
@@ -30,7 +35,7 @@ from bookie.models.auth import User
 from bookie.models.auth import UserMgr
 from bookie.models.stats import StatBookmarkMgr
 from bookie.models.queue import ImportQueueMgr
-
+from bookie.models.social import SocialMgr
 from bookie.models.fulltext import get_fulltext_handler
 
 LOG = logging.getLogger(__name__)
@@ -55,6 +60,33 @@ def _api_response(request, data):
     ])
 
     return data
+
+
+@view_config(route_name="api_user_stats", renderer="jsonp")
+def user_stats(request):
+    """Return all the user stats"""
+    user_count = UserMgr.count()
+    pending_activations = ActivationMgr.count()
+    users_with_bookmarks = BmarkMgr.count(distinct_users=True)
+    return _api_response(request, {
+        'count': user_count,
+        'activations': pending_activations,
+        'with_bookmarks': users_with_bookmarks
+    })
+
+
+@view_config(route_name="api_bookmark_stats", renderer="jsonp")
+def bookmark_stats(request):
+    """Return all the bookmark stats"""
+    bookmark_count = BmarkMgr.count()
+    unique_url_count = BmarkMgr.count(distinct=True)
+    search = get_fulltext_handler(None)
+
+    return _api_response(request, {
+        'count': bookmark_count,
+        'unique_count': unique_url_count,
+        'in_fulltext': search.doc_count()
+    })
 
 
 @view_config(route_name="api_ping", renderer="jsonp")
@@ -116,42 +148,61 @@ def bmark_get(request):
     params = request.params
     hash_id = rdict.get('hash_id', None)
     username = rdict.get('username', None)
+    title = params.get('description', None)
+    url = params.get('url', None)
     if username:
         username = username.lower()
 
-    # the hash id will always be there or the route won't match
-    bookmark = BmarkMgr.get_by_hash(hash_id,
-                                    username=username)
+    # The hash id will always be there or the route won't match.
+    bookmark = BmarkMgr.get_by_hash(hash_id, username=username)
 
-    last_bmark = {}
-    if 'last_bmark' in params and params['last_bmark'] != "false":
-        last = BmarkMgr.get_recent_bmark(username=username)
-        if last is not None:
-            last_bmark = {'last': dict(last)}
+    if request.user:
+        request_username = request.user.username
+    else:
+        request_username = None
+
+    if bookmark and not bookmark.has_access(request_username):
+        bookmark = None
+
+    # tag_list is a set - no duplicates
+    tag_list = set()
+
+    if title or url:
+        suggested_tags = suggest_tags(url)
+        suggested_tags.update(suggest_tags(title))
+        tag_list.update(suggested_tags)
 
     if bookmark is None:
         request.response.status_int = 404
         ret = {'error': "Bookmark for hash id {0} not found".format(hash_id)}
-        ret.update(last_bmark)
+        # Pack the response with Suggested Tags.
+        resp_tags = {'tag_suggestions': list(tag_list)}
+        ret.update(resp_tags)
         return _api_response(request, ret)
     else:
         return_obj = dict(bookmark)
+        return_obj['tags'] = [dict(tag[1]) for tag in bookmark.tags.items()]
 
         if 'with_content' in params and params['with_content'] != 'false':
             if bookmark.readable:
                 return_obj['readable'] = dict(bookmark.readable)
-
-        return_obj['tags'] = [dict(tag[1]) for tag in bookmark.tags.items()]
-
-        ret = {'bmark': return_obj}
-        ret.update(last_bmark)
+        # Pack the response with Suggested Tags.
+        ret = {
+            'bmark': return_obj,
+            'tag_suggestions': list(tag_list)
+        }
         return _api_response(request, ret)
 
 
 def _update_mark(mark, params):
     """Update the bookmark found with settings passed in"""
-    mark.description = params.get('description', mark.description)
+    description = params.get('description', None)
+    if not description and mark:
+        description = mark.description
+
+    mark.description = description
     mark.extended = params.get('extended', mark.extended)
+    mark.is_private = asbool(params.get('is_private', False))
 
     new_tag_str = params.get('tags', None)
 
@@ -207,9 +258,13 @@ def bmark_add(request):
                 rdict['hash_id'],
                 username=user.username
             )
-            mark = _update_mark(mark, params)
 
         except NoResultFound:
+            mark = None
+
+        if mark:
+            mark = _update_mark(mark, params)
+        else:
             request.response.status_code = 404
             return _api_response(request, {
                 'error': 'Bookmark with hash id {0} not found.'.format(
@@ -217,13 +272,17 @@ def bmark_add(request):
             })
 
     else:
-        # check if we already have this
+        # Check if we already have this bookmark.
         try:
             mark = BmarkMgr.get_by_url(params['url'],
                                        username=user.username)
-            mark = _update_mark(mark, params)
 
         except NoResultFound:
+            mark = None
+
+        if mark:
+            mark = _update_mark(mark, params)
+        else:
             # then let's store this thing
             # if we have a dt param then set the date to be that manual
             # date
@@ -246,6 +305,7 @@ def bmark_add(request):
                 params.get('tags', u''),
                 dt=stored_time,
                 inserted_by=inserted_by,
+                is_private=asbool(params.get('is_private', False)),
             )
 
         # we need to process any commands associated as well
@@ -316,18 +376,30 @@ def bmark_recent(request, with_content=False):
     # check if we have a page count submitted
     page = int(params.get('page', '0'))
     count = int(params.get('count', RESULTS_MAX))
-
-    # We need to check if we have an ordering crtieria specified.
-    order_by = params.get('sort', None)
-    if order_by == "popular":
-        order_by = Bmark.clicks.desc()
-    else:
-        order_by = Bmark.stored.desc()
+    if not with_content:
+        with_content = asbool(params.get('with_content', False))
 
     # we only want to do the username if the username is in the url
     username = rdict.get('username', None)
     if username:
         username = username.lower()
+
+    # We need to check who has requested for the bookmarks.
+    if request.user:
+        requested_by = request.user.username
+    else:
+        requested_by = None
+
+    # We need to check if we have an ordering crtieria specified.
+    order_by = params.get('sort', None)
+    if order_by == "popular":
+        if username:
+            order_by = Bmark.clicks.desc()
+        else:
+            order_by = Hashed.clicks.desc()
+
+    else:
+        order_by = Bmark.stored.desc()
 
     # thou shalt not have more then the HARD MAX
     # @todo move this to the .ini as a setting
@@ -349,7 +421,6 @@ def bmark_recent(request, with_content=False):
     # if we allow showing of content the query hangs and fails on the
     # postgres side. Need to check the query and figure out what's up.
     # see bug #142
-    # We don't allow with_content by default because of this bug.
     recent_list = BmarkMgr.find(
         limit=count,
         order_by=order_by,
@@ -357,6 +428,8 @@ def bmark_recent(request, with_content=False):
         tags=tags,
         username=username,
         with_tags=True,
+        with_content=with_content,
+        requested_by=requested_by,
     )
 
     result_set = []
@@ -419,7 +492,7 @@ def bmark_export(request):
     """
     username = request.user.username
 
-    bmark_list = BmarkMgr.user_dump(username)
+    bmark_list = BmarkMgr.user_dump(username, username)
     # log that the user exported this
     BmarkLog.export(username, username)
 
@@ -472,17 +545,11 @@ def search_results(request):
     else:
         phrase = rdict.get('search', '')
 
-    if rdict.get('search_mine') or 'username' in mdict:
-        with_user = True
+    username = mdict.get('username', None)
+    if request.user:
+        requested_by = request.user.username
     else:
-        with_user = False
-
-    username = None
-    if with_user:
-        if 'username' in mdict:
-            username = mdict.get('username')
-        elif request.user and request.user.username:
-            username = request.user.username
+        requested_by = None
 
     # with content is always in the get string
     search_content = asbool(rdict.get('with_content', False))
@@ -498,7 +565,8 @@ def search_results(request):
         res_list = searcher.search(
             phrase,
             content=search_content,
-            username=username if with_user else None,
+            username=username,
+            requested_by=requested_by,
             ct=count,
             page=page
         )
@@ -539,12 +607,21 @@ def tag_complete(request):
     :@param current: GET string of tags we already have python+database
 
     """
+    rdict = request.matchdict
     params = request.GET
 
+    username = rdict.get('username', None)
+    if username:
+        username = username.lower()
+
     if request.user:
-        username = request.user.username
+        requested_by = request.user.username
     else:
-        username = None
+        requested_by = None
+
+    if username != requested_by:
+        request.response.status_int = 403
+        return _api_response(request, {})
 
     if 'current' in params and params['current'] != "":
         current_tags = params['current'].split()
@@ -556,7 +633,8 @@ def tag_complete(request):
 
         tags = TagMgr.complete(tag,
                                current=current_tags,
-                               username=username)
+                               username=username,
+                               requested_by=requested_by)
     else:
         tags = []
 
@@ -620,6 +698,23 @@ def account_update(request):
     return _api_response(request, user_acct.safe_data())
 
 
+@view_config(route_name="api_reset_api_key", renderer="jsonp")
+@api_auth('api_key', UserMgr.get)
+def reset_api_key(request):
+    """Generate and Return the currently logged in user's new api key
+
+       Callable by either a logged in user or the api key for mobile apps/etc
+
+    """
+    user = request.user
+    # Generate new api key and assign it to user's api key
+    user.api_key = User.gen_api_key()
+    return _api_response(request, {
+        'api_key': user.api_key,
+        'message': 'Api Key was successfully changed',
+    })
+
+
 @view_config(route_name="api_user_api_key", renderer="jsonp")
 @api_auth('api_key', UserMgr.get)
 def api_key(request):
@@ -656,7 +751,7 @@ def reset_password(request):
     new = params.get('new_password', None)
 
     # if we don't have any password info, try a json_body in case it's a json
-    #POST
+    # POST
     if current is None and new is None:
         params = request.json_body
         current = params.get('current_password', None)
@@ -887,6 +982,16 @@ def invite_user(request):
         })
 
 
+@view_config(route_name="api_social_connections", renderer="jsonp")
+@api_auth('api_key', UserMgr.get)
+def social_connections(request):
+    rdict = request.matchdict
+    username = rdict.get('username', None)
+    res = [dict(con) for con in SocialMgr.get_all_connections(username)]
+    return _api_response(request, {'count': len(res),
+                                   'social_connections': res})
+
+
 @view_config(route_name="api_admin_readable_todo", renderer="jsonp")
 @api_auth('api_key', UserMgr.get, admin_only=True)
 def to_readable(request):
@@ -906,6 +1011,21 @@ def to_readable(request):
     return _api_response(request, {
         'urls': [u for u in data(url_list)]
     })
+
+
+@view_config(route_name="api_admin_twitter_refresh", renderer="jsonp")
+@view_config(route_name="api_admin_twitter_refresh_all", renderer="jsonp")
+@api_auth('api_key', UserMgr.get, admin_only=True)
+def twitter_refresh(request):
+    """Update tweets fetched from user account """
+    mdict = request.matchdict
+    username = mdict.get('username', None)
+    tasks.process_twitter_connections(username)
+    ret = {
+        'success': True,
+        'message': "running bot to fetch user's tweets"
+    }
+    return _api_response(request, ret)
 
 
 @view_config(route_name="api_admin_readable_reindex", renderer="jsonp")
@@ -1096,6 +1216,13 @@ def del_user(request):
         })
 
     try:
+        # First delete all the tag references for this user's bookmarks.
+        res = DBSession.query(Bmark.bid).filter(Bmark.username == u.username)
+        bids = [b[0] for b in res]
+
+        qry = bmarks_tags.delete(bmarks_tags.c.bmark_id.in_(bids))
+        qry.execute()
+
         # Delete all of the bmarks for this year.
         Bmark.query.filter(Bmark.username == u.username).delete()
         DBSession.delete(u)

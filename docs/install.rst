@@ -9,7 +9,7 @@ and your distro for the following:
 
 ::
 
-    $ git clone git://github.com/mitechie/Bookie.git
+    $ git clone git://github.com/bookieio/Bookie.git
     $ cd Bookie && make sysdeps && make install
     # THIS WILL TAKE A WHILE, GET A COFFEE
     $ make run
@@ -121,6 +121,44 @@ the database for you. Once you're ready run:
 ::
 
     $ make db_up
+
+
+Migrate from SQLite to MySQL or Postgresql
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+First, follow the steps above to set up an empty MySQL/Postgresql database.
+
+To prepare for the migration, we first need to empty the `alembic_version`
+and `users` tables which are not fully empty. To do this in MySQL:
+
+::
+
+    TRUNCATE `alembic_version`;
+    DELETE FROM `users` WHERE 1;
+
+Then, install the migration tools:
+
+::
+
+    $ apt-get install ruby-sqlite3 ruby-mysql
+    - OR -
+    $ apt-get install ruby-sqlite3 ruby-pg
+
+    $ gem install rack -v 1.4.5
+    $ gem install taps
+
+Next, let's publish our existing sqlite database:
+
+::
+
+    $ taps server sqlite:///home/user/bookie/bookie/bookie.db tmpuser tmppass &
+
+And finally we pull the data into our new MySQL/Postgresql database:
+
+::
+
+   $ taps pull -s mysql://bookie:***@localhost/bookie http://tmpuser:tmppass@localhost:5000
+   - OR -
+   $ taps pull -s postgres://bookie:***@localhost/bookie http://tmpuser:tmppass@localhost:5000
 
 .. _`browser extension`: extensions.html
 .. _`hosting docs`: hosting.html

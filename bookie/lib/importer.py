@@ -10,7 +10,7 @@ from dateutil import parser as dateparser
 from BeautifulSoup import BeautifulSoup
 from lxml import etree
 from lxml.etree import XMLSyntaxError
-
+from HTMLParser import HTMLParser
 from bookie.lib.urlhash import generate_hash
 from bookie.models import (
     BmarkMgr,
@@ -81,7 +81,7 @@ class Importer(object):
         """Meant to be implemented in subclasses"""
         raise NotImplementedError("Please implement this in your importer")
 
-    def save_bookmark(self, url, desc, ext, tags, dt=None):
+    def save_bookmark(self, url, desc, ext, tags, dt=None, is_private=False):
         """Save the bookmark to the db
 
         :param url: bookmark url
@@ -108,7 +108,8 @@ class Importer(object):
                 ext,
                 tags,
                 dt=dt,
-                inserted_by=IMPORTED
+                inserted_by=IMPORTED,
+                is_private=is_private,
             )
 
             # Add this hash to the list so that we can skip dupes in the
@@ -166,6 +167,7 @@ class DelImporter(Importer):
     def process(self):
         """Given a file, process it"""
         soup = BeautifulSoup(self.file_handle)
+        htmlParser = HTMLParser()
         count = 0
 
         ids = []
@@ -181,9 +183,9 @@ class DelImporter(Importer):
 
             link = tag.a
 
-            # Skip any bookmarks with an attribute of PRIVATE.
-            if link.has_key('PRIVATE'):
-                continue
+            is_private = False
+            if link.has_key('private'):  # noqa
+                is_private = True
 
             import_add_date = float(link['add_date'])
 
@@ -195,10 +197,11 @@ class DelImporter(Importer):
             try:
                 bmark = self.save_bookmark(
                     unicode(link['href']),
-                    unicode(link.text),
+                    unicode(htmlParser.unescape(link.text)),
                     unicode(extended),
                     u" ".join(unicode(link.get('tags', '')).split(u',')),
-                    dt=add_date)
+                    dt=add_date,
+                    is_private=is_private)
                 count = count + 1
                 DBSession.flush()
             except InvalidBookmark:
@@ -279,13 +282,19 @@ class DelXMLImporter(Importer):
 
             add_date = dateparser.parse(post.get('time'))
 
+            if post.get('private') == "no":
+                is_private = False
+            elif post.get('private') == "yes":
+                is_private = True
+
             try:
                 bmark = self.save_bookmark(
                     unicode(post.get('href')),
                     unicode(post.get('description')),
                     unicode(post.get('extended')),
                     unicode(post.get('tag')),
-                    dt=add_date)
+                    dt=add_date,
+                    is_private=is_private)
                 count = count + 1
                 if bmark:
                     bmark.stored = bmark.stored.replace(tzinfo=None)
@@ -369,6 +378,7 @@ class GBookmarkImporter(Importer):
         if not soup.contents[0] == "DOCTYPE NETSCAPE-Bookmark-file-1":
             raise Exception("File is not a google bookmarks file")
 
+        htmlParser = HTMLParser()
         urls = dict()  # url:url_metadata
 
         # we don't want to just import all the available urls, since each url
@@ -400,7 +410,7 @@ class GBookmarkImporter(Importer):
 
                         # Must use has_key here due to the link coming from
                         # the parser and it's not a true dict.
-                        if link.has_key('add_date'):
+                        if link.has_key('add_date'):  # noqa
                             if int(link['add_date']) < 9999999999:
                                 timestamp_added = int(link['add_date'])
                             else:
@@ -409,7 +419,7 @@ class GBookmarkImporter(Importer):
                             link['add_date'] = time.time()
 
                         urls[url] = {
-                            'description': link.text,
+                            'description': htmlParser.unescape(link.text),
                             'tags': tags,
                             'extended': extended,
                             'date_added': datetime.fromtimestamp(
@@ -547,7 +557,7 @@ class FBookmarkImporter(Importer):
                         bmark.get("uri") and \
                         is_good(bmark):
                     self.bmap_add(bmark, bmap)
-                    if not "tags" in bmap[bmark["uri"]]:
+                    if "tags" not in bmap[bmark["uri"]]:
                         bmap[bmark["uri"]]["tags"] = []
                     bmap[bmark["uri"]]["tags"].append(
                         tag["title"].replace(" ", "-"))

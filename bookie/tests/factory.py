@@ -9,6 +9,7 @@ from bookie.models import Bmark
 from bookie.models import Tag
 from bookie.models.applog import AppLog
 from bookie.models.auth import User
+from bookie.models.social import TwitterConnection
 from bookie.models.stats import (
     StatBookmark,
     USER_CT,
@@ -64,12 +65,27 @@ def make_tag(name=None):
     return Tag(name)
 
 
-def make_bookmark(user=None):
+def make_twitter_connection(username='admin'):
+    tconnection = TwitterConnection(username=username,
+                                    is_active=True,
+                                    last_connection=datetime.now(),
+                                    uid=u'1022699448',
+                                    access_key=u'dummy',
+                                    access_secret=u'dummy',
+                                    twitter_username='bookie',
+                                    refresh_date=datetime.now())
+    DBSession.add(tconnection)
+    DBSession.flush()
+    return tconnection
+
+
+def make_bookmark(user=None, is_private=False):
     """Generate a fake bookmark for testing use."""
     bmark = Bmark(random_url(),
                   username=u"admin",
                   desc=random_string(),
                   ext=random_string(),
+                  is_private=is_private,
                   tags=u"bookmarks")
 
     if user:

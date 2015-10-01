@@ -6,10 +6,10 @@ from BeautifulSoup import BeautifulSoup
 from bookie.lib.urlhash import generate_hash
 
 from datetime import datetime
-from datetime import timedelta
 
 from sqlalchemy import engine_from_config
 from sqlalchemy import event
+from sqlalchemy import Boolean
 from sqlalchemy import Column
 from sqlalchemy import DateTime
 from sqlalchemy import Integer
@@ -29,8 +29,8 @@ from sqlalchemy.orm import relation
 from sqlalchemy.orm import scoped_session
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm import Query
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm.exc import NoResultFound
+from sqlalchemy.exc import IntegrityError   # noqa
+from sqlalchemy.orm.exc import NoResultFound  # noqa
 
 from sqlalchemy.orm.collections import attribute_mapped_collection
 from sqlalchemy.sql import func
@@ -42,7 +42,6 @@ DBSession = scoped_session(sessionmaker(extension=ZopeTransactionExtension()))
 Base = declarative_base()
 
 LOG = logging.getLogger(__name__)
-RECENT = 24  # number of hours to consider a bookmark as recent
 
 
 def initialize_sql(settings):
@@ -169,7 +168,8 @@ class TagMgr(object):
         return qry.all()
 
     @staticmethod
-    def complete(prefix, current=None, limit=5, username=None):
+    def complete(prefix, current=None, limit=5, username=None,
+                 requested_by=None):
         """Find all of the tags that begin with prefix
 
         :param current: a list of current tags to compare with
@@ -185,8 +185,20 @@ class TagMgr(object):
             qry = Tag.query.filter(Tag.name.startswith(prefix))
 
             # if we have a username limit to only bookmarks of that user
-            if username is not None:
+            if username:
                 qry = qry.filter(Tag.bmark.any(username=username))
+                # If username == requested_by, we want all the bookmarks so,
+                # no need to filter on is_private.
+                # If username != requested_by, we want to limit to only
+                # public bookmarks.
+                if username != requested_by:
+                    bmark = aliased(Bmark)
+                    qry = qry.join((bmark, Tag.bmark)).\
+                        filter(bmark.is_private == False)   # noqa
+            else:
+                bmark = aliased(Bmark)
+                qry = qry.join((bmark, Tag.bmark)).\
+                    filter(bmark.is_private == False)   # noqa
 
             qry = qry.order_by(Tag.name).limit(limit)
             return qry.all()
@@ -210,8 +222,14 @@ class TagMgr(object):
 
             good_bmarks = DBSession.query(Bmark.bid)
 
-            if username is not None:
+            if username:
                 good_bmarks = good_bmarks.filter(Bmark.username == username)
+                if username != requested_by:
+                    good_bmarks = good_bmarks.\
+                        filter(Bmark.is_private == False)   # noqa
+            else:
+                good_bmarks = good_bmarks.\
+                    filter(Bmark.is_private == False)   # noqa
 
             good_bmarks = good_bmarks.\
                 filter(Bmark.tags.any(Tag.tid.in_(current_tags))).\
@@ -224,63 +242,50 @@ class TagMgr(object):
             return DBSession.execute(query)
 
     @staticmethod
-    def suggestions(bmark=None, recent=True, url=None, username=None,
-                    new=False):
-        """Find suggestions for tags for a bookmark
+    def suggestions(bmark=None, url=None, username=None):
+        """Find suggestions for tags for an existing bookmark
 
         The plan:
-            Suggest recent tags if there's a recent bookmark to pull tags from
-            Suggest related tags if there are other tags in bookmarks related
-            somehow (tbd)
-            Suggested other tags based on other people bookmarking this url
+            Suggest tags based on the readable content of the Bookmark
+            that the user is editing. New Bookmarks won't end up here.
 
         """
         tag_suggest = []
-        recent_tags = []
         tag_list = []
-        MAX_TAGS = 5
-        # Lets find the tags from the most recent bookmark if available
-        recent = BmarkMgr.get_recent_bmark(username=username)
-        if recent:
-            recent_tags.extend(recent.tag_str.split(u" "))
-        recent_tags = list(set(recent_tags))
-        # Suggested tags feature only supported for edits.
-        if not new:
-            #  If url is None return recent tags
-            if url is None:
-                return recent_tags
-            else:
-                bmark = BmarkMgr.get_by_url(url)
-                # If bmark is not parsed return recent tag list
-                if bmark.readable.status_code == '900':
-                    return recent_tags
-                else:
-                    content = bmark.readable.content
-                    # Remove unicode character while printing
-                    clean_content = (
-                        "".join(
-                            BeautifulSoup(content).findAll(text=True)).encode(
-                            'ascii', 'ignore'))
-                    get_tags = extract.TermExtractor()
-                    tag_suggest = get_tags(clean_content)
-                    tag_suggest = sorted(tag_suggest, key=lambda tag_suggest:
-                                         tag_suggest[1], reverse=True)
-                    for result in tag_suggest:
-                        # If it has a space in it, split it.
-                        tags = result[0].split()
-                        for tag in tags:
-                            if tag not in tag_list and tag not in bmark.tags:
-                                tag_list.append(tag)
 
-                    # return maximum of 5 tags
-                    # extend the list with recent tags
-                    tag_list.extend(recent_tags)
-                    if len(tag_list) >= MAX_TAGS:
-                        return tag_list[0:MAX_TAGS]
-                    else:
-                        return tag_list
-        # If not an edit request , return recent tags
-        return recent_tags
+        #  If url is None return empty tags
+        if url is None:
+            return tag_list
+        else:
+            bmark = BmarkMgr.get_by_url(url)
+            # If bmark is not parsed return empty tag list
+            if bmark.readable is None:
+                return tag_list
+            # Some times parsing may fail and we cannot parse the webpage
+            # then satus_code will be set to 900
+            elif bmark.readable.status_code == '900':
+                return tag_list
+            else:
+                content = bmark.readable.content
+                # Remove unicode character while printing
+                clean_content = (
+                    "".join(
+                        BeautifulSoup(content).findAll(text=True)).encode(
+                        'ascii', 'ignore'))
+                get_tags = extract.TermExtractor()
+                tag_suggest = get_tags(clean_content)
+                tag_suggest = sorted(tag_suggest, key=lambda tag_suggest:
+                                     tag_suggest[1], reverse=True)
+                for result in tag_suggest:
+                    # If it has a space in it, split it.
+                    tags = result[0].split()
+                    for tag in tags:
+                        # Require at least 3 chars long and ignore pure
+                        # numbers.
+                        if tag not in tag_list and tag not in bmark.tags:
+                            if len(tag) > 2 and not tag.isdigit():
+                                tag_list.append(tag.lower())
+                return tag_list
 
     @staticmethod
     def count():
@@ -390,7 +395,7 @@ class BmarkMgr(object):
         if username:
             qry = qry.filter(Bmark.username == username)
 
-        return qry.one()
+        return qry.first()
 
     @staticmethod
     def get_by_hash(hash_id, username=None):
@@ -406,30 +411,22 @@ class BmarkMgr(object):
         return qry.first()
 
     @staticmethod
-    def get_recent_bmark(username=None):
-        """Get the last bookmark a user submitted
-
-        Only check for a recent one, last 3 hours
-
-        """
-        last_hours = datetime.utcnow() - timedelta(hours=RECENT)
-        qry = Bmark.query.filter(Bmark.stored > last_hours)
-
-        if username:
-            qry = qry.filter(Bmark.username == username)
-
-        return qry.order_by(Bmark.stored.desc()).first()
-
-    @staticmethod
     def find(limit=50, order_by=None, page=0, tags=None, username=None,
-             with_content=False, with_tags=True):
+             with_content=False, with_tags=True, requested_by=None):
         """Search for specific sets of bookmarks"""
         qry = Bmark.query
+        qry = qry.join(Bmark.hashed).\
+            options(contains_eager(Bmark.hashed))
+
         offset = limit * page
 
-        if with_content:
-            qry = qry.outerjoin(Bmark.readable).\
-                options(contains_eager(Bmark.readable))
+        # If noqa is not used here the below error occurs with make lint.
+        # comparison to False should be 'if cond is False:'
+        # or 'if not cond:'
+        if not requested_by:
+            qry = qry.filter(Bmark.is_private == False)    # noqa
+        elif requested_by != username:
+            qry = qry.filter(Bmark.is_private == False)    # noqa
 
         if username:
             qry = qry.filter(Bmark.username == username)
@@ -444,6 +441,7 @@ class BmarkMgr(object):
                 from_self()
 
         if tags:
+            tags = [tag.lower() for tag in tags]  # For case matching
             qry = qry.join(Bmark.tags).\
                 options(contains_eager(Bmark.tags))
 
@@ -454,6 +452,14 @@ class BmarkMgr(object):
                     offset(offset).\
                     from_self()
             else:
+                if username:
+                    good_filter = and_(
+                        Bmark.bid == bmarks_tags.c.bmark_id,
+                        Bmark.username == username
+                    )
+                else:
+                    good_filter = (Bmark.bid == bmarks_tags.c.bmark_id)
+
                 bids_we_want = select(
                     [bmarks_tags.c.bmark_id.label('good_bmark_id')],
                     from_obj=[
@@ -464,7 +470,7 @@ class BmarkMgr(object):
                                 bmarks_tags.c.tag_id == Tag.tid
                             )
                         ).
-                        join('bmarks', Bmark.bid == bmarks_tags.c.bmark_id)
+                        join('bmarks', good_filter)
                     ]).\
                     group_by(bmarks_tags.c.bmark_id, Bmark.stored).\
                     having(
@@ -479,23 +485,24 @@ class BmarkMgr(object):
                 )
 
         # now outer join with the tags again so that we have the
-        # full list of tags for each bmark we filterd down to
+        # full list of tags for each bmark we filtered down to
         if with_tags:
             qry = qry.outerjoin(Bmark.tags).\
                 options(contains_eager(Bmark.tags))
 
-        # join to hashed so we always have the url
-        # if we have with_content, this is already done
-        qry = qry.options(joinedload('hashed'))
+        if with_content:
+            qry = qry.outerjoin(Bmark.readable).\
+                options(contains_eager(Bmark.readable))
 
-        return qry.all()
+        qry = qry.options(joinedload('hashed'))
+        return qry.order_by(order_by).all()
 
     @staticmethod
-    def user_dump(username):
+    def user_dump(username, requested_by):
         """Get a list of all of the user's bookmarks for an export dump usually
 
         """
-        return Bmark.query.outerjoin(Bmark.tags).\
+        qry = Bmark.query.outerjoin(Bmark.tags).\
             options(
                 contains_eager(Bmark.tags)
             ).\
@@ -503,22 +510,12 @@ class BmarkMgr(object):
             options(
                 contains_eager(Bmark.hashed)
             ).\
-            filter(Bmark.username == username).all()
+            filter(Bmark.username == username)
 
-    @staticmethod
-    def recent(limit=50, page=0, with_tags=False):
-        """Get a recent set of bookmarks"""
-        qry = Bmark.query
+        if requested_by != username:
+            qry = qry.filter(Bmark.is_private == False)  # noqa
 
-        offset = limit * page
-        qry = qry.order_by(Bmark.stored.desc()).\
-            limit(limit).\
-            offset(offset).\
-            from_self()
-
-        if with_tags:
-            qry = qry.outerjoin(Bmark.tags).\
-                options(contains_eager(Bmark.tags))
+        qry = qry.order_by(Bmark.stored.desc())
 
         return qry.all()
 
@@ -547,7 +544,8 @@ class BmarkMgr(object):
         return res
 
     @staticmethod
-    def store(url, username, desc, ext, tags, dt=None, inserted_by=None):
+    def store(url, username, desc, ext, tags, dt=None, inserted_by=None,
+              is_private=False):
         """Store a bookmark
 
         :param url: bookmarked url
@@ -567,6 +565,7 @@ class BmarkMgr(object):
             desc=desc,
             ext=ext,
             tags=tags,
+            is_private=is_private,
         )
 
         mark.inserted_by = inserted_by
@@ -589,13 +588,15 @@ class BmarkMgr(object):
         return qry.all()
 
     @staticmethod
-    def count(username=None, distinct=False, distinct_users=False):
+    def count(username=None, distinct=False, distinct_users=False,
+              is_private=False):
         """How many bookmarks are there
 
         :param username: should we limit to a username?
 
         """
         qry = DBSession.query(Bmark.hash_id)
+        qry = qry.filter(Bmark.is_private == is_private)
         if username:
             qry = qry.filter(Bmark.username == username)
         if distinct:
@@ -614,11 +615,11 @@ class BmarkMgr(object):
             filter(Bmark.username == username).\
             all()
         if len(bids):
-            Bmark.query.filter(Bmark.username == username).delete()
             deltags = bmarks_tags.delete().where(
                 bmarks_tags.c.bmark_id.in_([i[0] for i in bids])
             )
             DBSession.execute(deltags)
+            Bmark.query.filter(Bmark.username == username).delete()
             return len(bids)
         else:
             return None
@@ -652,6 +653,7 @@ class Bmark(Base):
     stored = Column(DateTime, default=datetime.utcnow)
     updated = Column(DateTime, onupdate=datetime.utcnow)
     clicks = Column(Integer, default=0)
+    is_private = Column(Boolean, nullable=False, default=False)
 
     # this could be chrome_extension, firefox_extension, website, browser XX,
     # import, etc
@@ -682,7 +684,8 @@ class Bmark(Base):
                         primaryjoin="Readable.bid == Bmark.bid",
                         uselist=False)
 
-    def __init__(self, url, username, desc=None, ext=None, tags=None):
+    def __init__(self, url, username, desc=None, ext=None, tags=None,
+                 is_private=False):
         """Create a new bmark instance
 
         :param url: string of the url to be added as a bookmark
@@ -703,6 +706,7 @@ class Bmark(Base):
         self.username = username
         self.description = desc
         self.extended = ext
+        self.is_private = is_private
 
         # tags are space separated
         if tags:
@@ -720,6 +724,18 @@ class Bmark(Base):
     def update_tags(self, tag_string):
         """Given a tag string, split and update our tags to be these"""
         self.tags = TagMgr.from_string(tag_string)
+
+    def has_access(self, username):
+        """Check if a user has access to view a bookmark"""
+        if self.is_private:
+            if self.username == username:
+                return True
+            elif username:
+                logging.warning(username + " requested for " + self.username +
+                                " bookmark")
+            return False
+        else:
+            return True
 
 
 def bmark_fulltext_tag_str_update(mapper, connection, target):

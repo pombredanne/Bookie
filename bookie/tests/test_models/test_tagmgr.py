@@ -1,35 +1,22 @@
 """Test the basics including the bmark and tags"""
-from pyramid import testing
 
-from bookie.models import DBSession
-from bookie.models import Tag
-from bookie.models import TagMgr
-from bookie.models import BmarkMgr
+from bookie.models import (
+    DBSession,
+    Tag,
+    TagMgr,
+)
+from bookie.models.auth import User
 
-from bookie.tests import empty_db
 from bookie.tests import gen_random_word
 from bookie.tests import TestDBBase
-from bookie.tests.factory import make_tag
-
-import os
+from bookie.tests.factory import (
+    make_tag,
+    make_bookmark,
+)
 
 
 class TestTagMgrStats(TestDBBase):
     """Handle some TagMgr stats checks"""
-
-    def setUp(self):
-        """Setup Tests"""
-        from pyramid.paster import get_app
-        from bookie.tests import BOOKIE_TEST_INI
-        app = get_app(BOOKIE_TEST_INI, 'bookie')
-        from webtest import TestApp
-        self.testapp = TestApp(app)
-        testing.setUp()
-
-    def tearDown(self):
-        """Tear down each test"""
-        testing.tearDown()
-        empty_db()
 
     def test_total_ct(self):
         """Verify that our total count method is working"""
@@ -41,73 +28,186 @@ class TestTagMgrStats(TestDBBase):
         ct = TagMgr.count()
         self.assertEqual(5, ct, 'We should have a total of 5: ' + str(ct))
 
-    def test_basic_complete(self):
+    def test_basic_complete_same_user(self):
         """Tags should provide completion options."""
+        user = User()
+        user.username = gen_random_word(10)
+        DBSession.add(user)
+
         # Generate demo tag into the system
         tags = [make_tag() for i in range(5)]
         [DBSession.add(t) for t in tags]
 
-        test_str = tags[0].name[0:2]
-        suggestions = TagMgr.complete(test_str)
+        tag_names = []
+        for tag in tags:
+            tag_names.append(tag.name)
+        bmark_tags = u" ".join(tag_names)
+        bmark_url = u'http://bmark.us'
+        bmark_desc = u'This is a test bookmark'
+        bmark_ext = u'Some extended notes'
 
+        # Store the bookmark.
+        bmark = make_bookmark(is_private=True)
+        bmark.url = bmark_url
+        bmark.username = user.username
+        bmark.description = bmark_desc
+        bmark.extended = bmark_ext
+        bmark.tags = TagMgr.from_string(bmark_tags)
+        bmark.is_private = False
+        DBSession.add(bmark)
+
+        test_str = tags[0].name[0:2]
+        suggestions = TagMgr.complete(test_str, username=user.username,
+                                      requested_by=user.username)
         self.assertTrue(
             tags[0] in suggestions,
             "The sample tag was found in the completion set")
+
+    def test_basic_complete_same_user_accounts_for_privacy(self):
+        """Tags should provide completion options."""
+        user = User()
+        user.username = gen_random_word(10)
+        DBSession.add(user)
+
+        # Generate demo tag into the system
+        tags = [make_tag() for i in range(5)]
+        [DBSession.add(t) for t in tags]
+
+        tag_names = []
+        for tag in tags:
+            tag_names.append(tag.name)
+        bmark_tags = u" ".join(tag_names)
+        bmark_url = u'http://bmark.us'
+        bmark_desc = u'This is a test bookmark'
+        bmark_ext = u'Some extended notes'
+
+        # Store the bookmark.
+        bmark = make_bookmark(is_private=True)
+        bmark.url = bmark_url
+        bmark.username = user.username
+        bmark.description = bmark_desc
+        bmark.extended = bmark_ext
+        bmark.tags = TagMgr.from_string(bmark_tags)
+        DBSession.add(bmark)
+
+        test_str = tags[0].name[0:2]
+        suggestions = TagMgr.complete(test_str, username=user.username,
+                                      requested_by=user.username)
+        self.assertTrue(
+            tags[0] in suggestions,
+            "The sample tag was found in the completion set")
+
+    def test_basic_complete_diff_user(self):
+        """Tags should provide completion options."""
+        user = User()
+        user.username = gen_random_word(10)
+        DBSession.add(user)
+
+        # Generate demo tag into the system
+        tags = [make_tag() for i in range(5)]
+        [DBSession.add(t) for t in tags]
+
+        tag_names = []
+        for tag in tags:
+            tag_names.append(tag.name)
+        bmark_tags = u" ".join(tag_names)
+        bmark_url = u'http://bmark.us'
+        bmark_desc = u'This is a test bookmark'
+        bmark_ext = u'Some extended notes'
+
+        # Store the bookmark.
+        bmark = make_bookmark(is_private=True)
+        bmark.url = bmark_url
+        bmark.username = user.username
+        bmark.description = bmark_desc
+        bmark.extended = bmark_ext
+        bmark.tags = TagMgr.from_string(bmark_tags)
+        bmark.is_private = False
+        DBSession.add(bmark)
+
+        test_str = tags[0].name[0:2]
+        suggestions = TagMgr.complete(test_str, username=user.username,
+                                      requested_by=gen_random_word(10))
+        self.assertTrue(
+            tags[0] in suggestions,
+            "The sample tag was found in the completion set")
+
+        # Also check when username is None.
+        suggestions = TagMgr.complete(test_str, username=None)
+        self.assertTrue(
+            tags[0] in suggestions,
+            "The sample tag was found in the completion set")
+
+    def test_basic_complete_diff_user_accounts_for_privacy(self):
+        """Tags should not provide completion options."""
+        user = User()
+        user.username = gen_random_word(10)
+        DBSession.add(user)
+
+        # Generate demo tag into the system
+        tags = [make_tag() for i in range(5)]
+        [DBSession.add(t) for t in tags]
+
+        tag_names = []
+        for tag in tags:
+            tag_names.append(tag.name)
+        bmark_tags = u" ".join(tag_names)
+        bmark_url = u'http://bmark.us'
+        bmark_desc = u'This is a test bookmark'
+        bmark_ext = u'Some extended notes'
+
+        # Store the bookmark.
+        bmark = make_bookmark(is_private=True)
+        bmark.url = bmark_url
+        bmark.username = user.username
+        bmark.description = bmark_desc
+        bmark.extended = bmark_ext
+        bmark.tags = TagMgr.from_string(bmark_tags)
+        DBSession.add(bmark)
+
+        test_str = tags[0].name[0:2]
+        suggestions = TagMgr.complete(test_str, username=user.username,
+                                      requested_by=gen_random_word(10))
+        self.assertTrue(
+            tags[0] not in suggestions,
+            "The sample tag was not found in the completion set")
+
+        # Also check when username is None.
+        suggestions = TagMgr.complete(test_str, username=None)
+        self.assertTrue(
+            tags[0] not in suggestions,
+            "The sample tag was not found in the completion set")
 
     def test_case_insensitive(self):
         """Suggestion does not care about case of the prefix."""
+        user = User()
+        user.username = gen_random_word(10)
+        DBSession.add(user)
+
         # Generate demo tag into the system
         tags = [make_tag() for i in range(5)]
         [DBSession.add(t) for t in tags]
 
+        tag_names = []
+        for tag in tags:
+            tag_names.append(tag.name)
+        bmark_tags = u" ".join(tag_names)
+        bmark_url = u'http://bmark.us'
+        bmark_desc = u'This is a test bookmark'
+        bmark_ext = u'Some extended notes'
+
+        # Store the bookmark.
+        bmark = make_bookmark(is_private=True)
+        bmark.url = bmark_url
+        bmark.username = user.username
+        bmark.description = bmark_desc
+        bmark.extended = bmark_ext
+        bmark.tags = TagMgr.from_string(bmark_tags)
+        DBSession.add(bmark)
+
         test_str = tags[0].name[0:4].upper()
-        suggestions = TagMgr.complete(test_str)
+        suggestions = TagMgr.complete(test_str, username=user.username,
+                                      requested_by=user.username)
         self.assertTrue(
             tags[0] in suggestions,
             "The sample tag was found in the completion set")
-
-    def test_suggested_tags(self):
-        """Suggestions based on the content of the bookmarked page"""
-        # login into bookie
-        user_data = {'login': u'admin',
-                     'password': u'admin',
-                     'form.submitted': u'true'}
-        res = self.testapp.post('/login',
-                                params=user_data)
-        # Add a bookmark
-        res = DBSession.execute(
-            "SELECT api_key FROM users WHERE username = 'admin'").fetchone()
-        key = res['api_key']
-        url = u'http://testing_tags.com'
-        # set the readable content for the bookmark
-        path = os.getcwd()+"/bookie/tests/test_models/tag_test.txt"
-        test_content_file = open(path, 'r')
-        content = ""
-        for word in test_content_file:
-                content += word
-        test_bmark = {
-            'url': url,
-            'description': u'Bookie',
-            'extended': u'',
-            'tags': u'',
-            'api_key': key,
-            'content': content,
-        }
-        res = self.testapp.post('/api/v1/admin/bmark',
-                                params=test_bmark,
-                                status=200)
-
-        bmark = BmarkMgr.get_by_url(url)
-        hash_id = bmark.hash_id
-        tags_expected = ['network', 'simulator', 'NS', 'user', 'project']
-        edit_bmark = {
-            'hash_id': hash_id,
-            'username': 'admin',
-            'url': url
-        }
-        hash_id = str(hash_id)
-        res = self.testapp.post('/admin/edit/'+hash_id,
-                                params=edit_bmark,
-                                status=200)
-        for tag in tags_expected:
-            self.assertIn(tag, res.body)
